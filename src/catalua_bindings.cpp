@@ -492,12 +492,59 @@ void cata::detail::reg_hooks_examples( sol::state &lua )
     DOC_PARAMS( "params" );
     luna::set_fx( lib, "on_character_reset_stats", []( const sol::table & ) {} );
 
+    DOC( "Called when character gets the effect which has `EFFECT_LUA_ON_ADDED` flag.  " );
+    DOC( "The hook receives a table with keys:  " );
+    DOC( "* `char` (Character)  " );
+    DOC( "* `effect` (Effect)  " );
+    DOC_PARAMS( "params" );
+    luna::set_fx( lib, "on_character_effect_added", []( const sol::table & ) {} );
+
+    DOC( "Called when character is on the effect which has `EFFECT_LUA_ON_TICK` flag.  " );
+    DOC( "The hook receives a table with keys:  " );
+    DOC( "* `character` (Character)  " );
+    DOC( "* `effect` (Effect)  " );
+    DOC_PARAMS( "params" );
+    luna::set_fx( lib, "on_character_effect", []( const sol::table & ) {} );
+
     DOC( "Called when a character is dead.  " );
     DOC( "The hook receives a table with keys:  " );
     DOC( "* `char` (Character)  " );
     DOC( "* `killer` (Creature)  " );
     DOC_PARAMS( "params" );
     luna::set_fx( lib, "on_character_death", []( const sol::table & ) {} );
+
+    DOC( "Called when shot(s) is fired from a gun.  " );
+    DOC( "The hook receives a table with keys:  " );
+    DOC( "* `shooter` (Character)  " );
+    DOC( "* `target_pos` (Tripoint)  " );
+    DOC( "* `shots` (int)  " );
+    DOC( "* `gun` (item)  " );
+    DOC( "* `ammo` (item): For `RELOAD_AND_SHOOT` guns like a bow. On the others, it returns `nil` value.  " );
+    DOC_PARAMS( "params" );
+    luna::set_fx( lib, "on_shoot", []( const sol::table & ) {} );
+
+    DOC( "Called when an item is thrown.  " );
+    DOC( "The hook receives a table with keys:  " );
+    DOC( "* `thrower` (Character)  " );
+    DOC( "* `target_pos` (Tripoint)  " );
+    DOC( "* `throw_from_pos` (Tripoint)  " );
+    DOC( "* `thrown` (item)  " );
+    DOC_PARAMS( "params" );
+    luna::set_fx( lib, "on_throw", []( const sol::table & ) {} );
+
+    DOC( "Called when monster gets the effect which has `EFFECT_LUA_ON_ADDED` flag.  " );
+    DOC( "The hook receives a table with keys:  " );
+    DOC( "* `mon` (Monster)  " );
+    DOC( "* `effect` (Effect)  " );
+    DOC_PARAMS( "params" );
+    luna::set_fx( lib, "on_mon_effect_added", []( const sol::table & ) {} );
+
+    DOC( "Called when character is on the effect which has `EFFECT_LUA_ON_TICK` flag.  " );
+    DOC( "The hook receives a table with keys:  " );
+    DOC( "* `mon` (Monster)  " );
+    DOC( "* `effect` (Effect)  " );
+    DOC_PARAMS( "params" );
+    luna::set_fx( lib, "on_mon_effect", []( const sol::table & ) {} );
 
     DOC( "Called when a monster is dead.  " );
     DOC( "The hook receives a table with keys:  " );
@@ -663,5 +710,6 @@ void cata::reg_all_bindings( sol::state &lua )
     reg_technique( lua );
     reg_types( lua );
     reg_time_types( lua );
+    reg_effect( lua );
     reg_testing_library( lua );
 }

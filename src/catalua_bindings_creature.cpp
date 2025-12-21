@@ -122,6 +122,17 @@ void cata::detail::reg_creature( sol::state &lua )
             }
         } );
 
+        luna::set_fx( ut, "get_effect", []( Creature & cr, const efftype_id & eff,
+        sol::optional<const bodypart_str_id &> bpid ) -> effect & {
+            if( bpid.has_value() )
+            {
+                return cr.get_effect( eff, *bpid );
+            } else
+            {
+                return cr.get_effect( eff );
+            }
+        } );
+
         luna::set_fx( ut, "has_effect_with_flag", []( const Creature & cr,
         const flag_id & flag, sol::optional<const bodypart_str_id &> bpid ) -> bool {
             const bodypart_str_id &bp = bpid ? *bpid : bodypart_str_id::NULL_ID();
@@ -318,6 +329,18 @@ void cata::detail::reg_monster( sol::state &lua )
         SET_FX_T( make_friendly, void() );
 
         SET_FX_T( make_ally, void( const monster & ) );
+
+        SET_FX_T( get_items, const std::vector<item *> &() const );
+        luna::set_fx( ut, "add_item", []( monster & m, item * it )
+        {
+            if( it == nullptr ) { return; }
+            detached_ptr<item> ptr = item::spawn( *it );
+            m.add_item( std::move( ptr ) );
+        } );
+        SET_FX_T( remove_item, detached_ptr<item>( item * ) );
+        SET_FX_T( clear_items, std::vector<detached_ptr<item>>() );
+        SET_FX_T( drop_items, void( const tripoint & ) );
+        SET_FX_N_T( drop_items, "drop_items_here", void() );
     }
 #undef UT_CLASS // #define UT_CLASS monster
 }
