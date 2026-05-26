@@ -1164,8 +1164,8 @@ std::vector<options_manager::id_and_option> options_manager::build_soundpacks_li
 #if defined(__ANDROID__)
 bool options_manager::android_get_default_setting( const char *settings_name, bool default_value )
 {
-    JNIEnv *env = static_cast< JNIEnv *>( SDL_AndroidGetJNIEnv() );
-    jobject activity = static_cast< jobject>( SDL_AndroidGetActivity() );
+    JNIEnv *env = static_cast< JNIEnv *>( SDL_GetAndroidJNIEnv() );
+    jobject activity = static_cast< jobject>( SDL_GetAndroidActivity() );
     jclass clazz( env->GetObjectClass( activity ) );
     jmethodID method_id = env->GetMethodID( clazz, "getDefaultSetting", "(Ljava/lang/String;Z)Z" );
     jboolean ans = env->CallBooleanMethod( activity, method_id, env->NewStringUTF( settings_name ),
@@ -2001,6 +2001,21 @@ void options_manager::add_options_graphics()
 
     get_option( "NIGHT_VISION_COLOR" ).setPrerequisite( "NIGHT_VISION_DEFAULT_COLOR", "custom" );
 
+    add( "ENHANCED_NIGHT_VISION_DEFAULT_COLOR", graphics,
+         translate_marker( "Enhanced Night Vision Default Colors" ),
+    translate_marker( "Choose from default night vision colors." ), {
+        { "#6cf5e7", translate_marker( "White Phosphor" ) },
+        { "#33e84e", translate_marker( "Green Phosphor" ) },
+        { "#888888", translate_marker( "Gray" ) },
+        { "custom", translate_marker( "Custom" ) }
+    }, "#6cf5e7" );
+
+    add( "ENHANCED_NIGHT_VISION_COLOR", graphics, translate_marker( "Enhanced Night Vision Color" ),
+         translate_marker( "Sets custom night vision color." ), "#6cf5e7", 60 );
+
+    get_option( "ENHANCED_NIGHT_VISION_COLOR" ).setPrerequisite( "ENHANCED_NIGHT_VISION_DEFAULT_COLOR",
+            "custom" );
+
     add_empty_line();
 
     add( "TERMINAL_X", graphics, translate_marker( "Terminal width" ),
@@ -2446,7 +2461,7 @@ void options_manager::add_options_performance()
                            "Higher values reduce redundant ray traces at the cost of more RAM.  "
                            "Reduce if memory is tight; increase on machines with spare RAM and many "
                            "on-screen creatures." ),
-         1000, 500000, is_android ? 64000 : 128000 );
+         1024, 4194304, is_android ? 65536 : 262144 );
 
     add_empty_line();
 
@@ -2496,11 +2511,6 @@ void options_manager::add_options_performance()
                                "Disable on machines where the ~70 k-cell work unit is too small to "
                                "amortize dispatch latency.  Requires restart." ),
              true );
-        add( "LAZY_BORDER", page_id,
-             translate_marker( "Pre-load Border" ),
-             translate_marker( "No effect — lazy border loading is pending async mapgen rework "
-                               "and is currently disabled regardless of this setting." ),
-             !is_android );
     } );
 
     get_option( "THREAD_POOL_WORKERS" ).setPrerequisite( "MULTITHREADING_ENABLED" );
@@ -2508,7 +2518,6 @@ void options_manager::add_options_performance()
     get_option( "MONSTER_PLAN_CHUNK_SIZE" ).setPrerequisite( "MULTITHREADING_ENABLED" );
     get_option( "PARALLEL_MAP_CACHE" ).setPrerequisite( "MULTITHREADING_ENABLED" );
     get_option( "PARALLEL_SCENT_UPDATE" ).setPrerequisite( "MULTITHREADING_ENABLED" );
-    get_option( "LAZY_BORDER" ).setPrerequisite( "MULTITHREADING_ENABLED" );
 
     add_empty_line();
 
@@ -2523,6 +2532,12 @@ void options_manager::add_options_performance()
                                "Larger values increase the loaded area and memory usage; "
                                "smaller values reduce both. " ),
              0, REALITY_BUBBLE_SIZE_MAX, is_android ? 4 : 6 );
+        add( "LAZY_BORDER", page_id,
+             translate_marker( "Pre-load Border" ),
+             translate_marker( "Preload a one-overmap-tile border around the reality bubble over several turns.  "
+                               "This reduces map-shift hitches at the cost of extra per-turn loading work and    "
+                               "some additional memory usage." ),
+             !is_android );
         add( "ACTIVITY_MOBILE_BUBBLE_SIZE", page_id,
              translate_marker( "Mobile Activity Bubble Size" ),
              translate_marker( "Shrink the reality bubble to this radius while the player is performing a "
@@ -2594,6 +2609,11 @@ void options_manager::add_options_performance()
         //                        "fires to be simulated correctly. "
         //                        "0 disables out-of-bubble fire spread loading entirely. " ),
         //      0, 250, 25 );
+        add( "RETAINED_OMT_CACHE_MULTIPLIER", page_id,
+             translate_marker( "Retained Map Cache" ),
+             translate_marker( "Keep more map data loaded to reduce lag when moving around the same general area, "
+                               "at the cost of memory usage." ),
+             1, 20, is_android ? 1 : 3 );
         add( "POWER_PORTAL_LOAD_RADIUS", page_id,
              translate_marker( "Power portal load radius (submaps)" ),
              translate_marker( "Radius in submaps around each end of a power-portal link that is "
@@ -2732,14 +2752,6 @@ void options_manager::add_options_debug()
          translate_marker( "If true, injuries cause persistent pain until they are healed." ), false );
 
     add_empty_line();
-
-    add( "MIN_AUTODRIVE_SPEED", debug, translate_marker( "Minimum auto-drive speed" ),
-         translate_marker( "Set the minimum speed for the auto-drive feature.  In tiles/s.  Default is 1 (6 km/h or 4 mph)." ),
-         1, 100, 1 );
-
-    add( "MAX_AUTODRIVE_SPEED", debug, translate_marker( "Maximum auto-drive speed" ),
-         translate_marker( "Set the maximum speed for the auto-drive feature.  In tiles/s.  Default is 9 (57 km/h or 36 mph)." ),
-         1, 100, 9 );
 
     add( "LIMITED_BAYONETS", debug, translate_marker( "New bayonet system" ),
          translate_marker( "If true, bayonets replace weapon attack instead of adding to it.  WIP feature, weakens bayonets heavily at the moment." ),
@@ -4083,10 +4095,14 @@ std::string options_manager::show( bool ingame, const bool world_options_only,
 
             } else if( iter.first == "TILES" || iter.first == "USE_TILES" || iter.first == "STATICZEFFECT" ||
                        iter.first == "MEMORY_MAP_MODE" || iter.first == "OVERMAP_TILES" ||
-                       iter.first == "NIGHT_VISION_COLOR" || iter.first == "NIGHT_VISION_DEFAULT_COLOR" ) {
+                       iter.first == "NIGHT_VISION_COLOR" || iter.first == "NIGHT_VISION_DEFAULT_COLOR" ||
+                       iter.first == "ENHANCED_NIGHT_VISION_COLOR" ||
+                       iter.first == "ENHANCED_NIGHT_VISION_DEFAULT_COLOR" ) {
                 used_tiles_changed = true;
                 if( iter.first == "STATICZEFFECT" || iter.first == "MEMORY_MAP_MODE" ||
-                    iter.first == "NIGHT_VISION_COLOR" || iter.first == "NIGHT_VISION_DEFAULT_COLOR" ) {
+                    iter.first == "NIGHT_VISION_COLOR" || iter.first == "NIGHT_VISION_DEFAULT_COLOR" ||
+                    iter.first == "ENHANCED_NIGHT_VISION_COLOR" ||
+                    iter.first == "ENHANCED_NIGHT_VISION_DEFAULT_COLOR" ) {
                     force_tile_change = true;
                 }
             } else if( iter.first == "USE_LANG" ) {
@@ -4299,7 +4315,8 @@ void options_manager::cache_to_globals()
     monster_plan_chunk_size   = ::get_option<int>( "MONSTER_PLAN_CHUNK_SIZE" );
     parallel_map_cache        = ::get_option<bool>( "PARALLEL_MAP_CACHE" );
     parallel_scent_update     = ::get_option<bool>( "PARALLEL_SCENT_UPDATE" );
-    lazy_border_enabled = ::get_option<bool>( "LAZY_BORDER" ) && false;
+    lazy_border_enabled = ::get_option<bool>( "LAZY_BORDER" );
+    retained_omt_cache_multiplier = ::get_option<int>( "RETAINED_OMT_CACHE_MULTIPLIER" );
 
     merge_comestible_mode = ( [] {
         const auto opt = ::get_option<std::string>( "MERGE_COMESTIBLES" );
