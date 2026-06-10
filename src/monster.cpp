@@ -7,11 +7,14 @@
 #include <optional>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "action_time_scale.h"
 #include "avatar.h"
 #include "bodypart.h"
+#include "catalua.h"
 #include "catalua_hooks.h"
+#include "catalua_impl.h"
 #include "catalua_sol.h"
 #include "character.h"
 #include "coordinates.h"
@@ -29,6 +32,7 @@
 #include "game_constants.h"
 #include "game.h"
 #include "int_id.h"
+#include "init.h"
 #include "item_group.h"
 #include "item.h"
 #include "item_category.h"
@@ -141,6 +145,76 @@ static const trait_id trait_PHEROMONE_INSECT( "PHEROMONE_INSECT" );
 static const trait_id trait_PHEROMONE_MAMMAL( "PHEROMONE_MAMMAL" );
 static const trait_id trait_PROF_FERAL( "PROF_FERAL" );
 static const trait_id trait_TERRIFYING( "TERRIFYING" );
+
+namespace
+{
+
+auto report_missing_lua_attitude( const std::string &method ) -> void
+{
+    static auto warned = std::unordered_set<std::string> {};
+    if( !warned.insert( method ).second ) {
+        return;
+    }
+    debugmsg( "Lua monster attitude function '%s' is not defined", method );
+}
+
+auto report_invalid_lua_attitude_return( const std::string &method, const sol::object &value,
+        sol::state &lua ) -> void
+{
+    static auto warned = std::unordered_set<std::string> {};
+    if( !warned.insert( method ).second ) {
+        return;
+    }
+    const auto type_name = get_luna_type( value );
+    const auto raw_name = type_name.value_or(
+                              std::string( sol::type_name( lua, value.get_type() ) ) );
+    debugmsg( "Lua monster attitude function '%s' returned %s, expected MonsterAttitude",
+              method, raw_name );
+}
+
+auto get_lua_monster_attitude( const monster &mon,
+                               const Character *target ) -> std::optional<monster_attitude>
+{
+    const auto &lua_method = mon.type->lua_attitude;
+    if( !lua_method ) {
+        return std::nullopt;
+    }
+
+    auto *lua_state = DynamicDataLoader::get_instance().lua.get();
+    if( lua_state == nullptr ) {
+        return std::nullopt;
+    }
+
+    sol::state &lua = lua_state->lua;
+    sol::object ref = lua.globals()["game"]["monster_attitude_functions"][*lua_method];
+    if( ref.get_type() != sol::type::function ) {
+        report_missing_lua_attitude( *lua_method );
+        return std::nullopt;
+    }
+
+    auto func = ref.as<sol::protected_function>();
+    const auto target_ref = target != nullptr
+                            ? sol::make_object( lua, target )
+                            : sol::make_object( lua, sol::lua_nil );
+    sol::protected_function_result res = func( &mon, target_ref );
+    check_func_result( res );
+    if( !res.valid() ) {
+        return std::nullopt;
+    }
+
+    const auto value = res.get<sol::object>();
+    if( value.get_type() == sol::type::lua_nil ) {
+        return std::nullopt;
+    }
+    if( value.get_type() != sol::type::number ) {
+        report_invalid_lua_attitude_return( *lua_method, value, lua );
+        return std::nullopt;
+    }
+
+    return value.as<monster_attitude>();
+}
+
+} // namespace
 static const trait_id trait_THRESH_MYCUS( "THRESH_MYCUS" );
 
 struct pathfinding_settings;
@@ -329,7 +403,7 @@ monster::~monster() = default;
 
 auto monster::setpos( const tripoint_bub_ms &p ) -> void
 {
-    setpos( get_map().bub_to_abs( p ) );
+    setpos( map_local_to_abs( get_map(), p ) );
 }
 
 auto monster::setpos( const tripoint_abs_ms &p ) -> void
@@ -338,11 +412,10 @@ auto monster::setpos( const tripoint_abs_ms &p ) -> void
         return;
     }
 
-    const auto new_bub_pos = get_map().abs_to_bub( p );
     const auto wandering = is_wandering();
-    g->update_zombie_pos( *this, new_bub_pos );
+    g->update_zombie_pos( *this, p );
     pos_abs = p;
-    if( has_effect( effect_ridden ) && mounted_player && mounted_player->bub_pos() != bub_pos() ) {
+    if( has_effect( effect_ridden ) && mounted_player && mounted_player->abs_pos() != pos_abs ) {
         add_msg( m_debug, "Ridden monster %s moved independently and dumped player", get_name() );
         mounted_player->forced_dismount();
     }
@@ -351,9 +424,9 @@ auto monster::setpos( const tripoint_abs_ms &p ) -> void
     }
 }
 
-tripoint_bub_ms monster::bub_pos() const
+auto monster::bub_pos() const -> tripoint_bub_ms
 {
-    return get_map().abs_to_bub( pos_abs );
+    return abs_to_bub( pos_abs );
 }
 
 auto monster::abs_pos() const -> tripoint_abs_ms
@@ -657,7 +730,7 @@ void monster::refill_udders()
 
 auto monster::spawn( const tripoint_bub_ms &p ) -> void
 {
-    pos_abs = get_map().bub_to_abs( p );
+    pos_abs = map_local_to_abs( get_map(), p );
     unset_dest();
 }
 
@@ -1529,6 +1602,10 @@ std::string io::enum_to_string<monster_attitude>( monster_attitude att )
 
 auto monster::attitude( const Character *u ) const -> monster_attitude
 {
+    if( const auto lua_attitude = get_lua_monster_attitude( *this, u ); lua_attitude ) {
+        return *lua_attitude;
+    }
+
     if( friendly != 0 ) {
         if( has_effect( effect_docile ) ) {
             return MATT_FPASSIVE;
@@ -3211,7 +3288,7 @@ void monster::die( Creature *nkiller )
     if( !is_hallucination() && has_flag( MF_QUEEN ) ) {
         // The submap coordinates of this monster, monster groups coordinates are
         // submap coordinates.
-        const auto abssub = project_to<coords::sm>( g->m.bub_to_abs( bub_pos() ) );
+        const auto abssub = project_to<coords::sm>( abs_pos() );
         // Do it for overmap above/below too
         for( const auto &p : points_in_radius( abssub, g_half_mapsize, 1 ) ) {
             // TODO: fix point types
